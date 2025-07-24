@@ -53,6 +53,28 @@ if TB_LOG:
 utils.set_seed(42)
 torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
+
+def DrawTrajectory(sample_idx, input_coords, pred_coords):
+    real_traj = input_coords[sample_idx].detach().cpu().numpy()
+    pred_traj = pred_coords[sample_idx].detach().cpu().numpy()
+    real_lat = real_traj[:, 0] * 180 / np.pi
+    real_lon = real_traj[:, 1] * 180 / np.pi
+    pred_lat = pred_traj[:, 0] * 180 / np.pi
+    pred_lon = pred_traj[:, 1] * 180 / np.pi
+    plt.figure()
+    # plt.plot(real_lon[0], real_lat[0], markersize=2, label='start_r')
+    # plt.plot(pred_lon[0], pred_lat[0], markersize=2, label='start_p')
+
+    plt.plot(real_lon, real_lat, label=r'$real/\degree$')
+    plt.plot(pred_lon, pred_lat, label=r'$pred/\degree$')
+
+    plt.legend()
+    plt.xlabel('LON(jing du)')
+    plt.ylabel('LAT(wei du)')
+
+    plt.savefig(cf.savedir + 'traj_fig' + str(sample_idx) + '.png')
+
+
 if __name__ == "__main__":
 
     device = cf.device
@@ -83,27 +105,31 @@ if __name__ == "__main__":
             except:
                 moving_idx = len(V["traj"]) - 1  # This track will be removed
             V["traj"] = V["traj"][moving_idx:, :]
-        Data[phase] = [x for x in l_pred_errors if not np.isnan(x["traj"]).any() and len(x["traj"]) > cf.min_seqlen]
+        Data[phase] = [
+            x
+            for x in l_pred_errors
+            if not np.isnan(x["traj"]).any() and len(x["traj"]) > cf.min_seqlen
+        ]
         print(len(l_pred_errors), len(Data[phase]))
         print(f"Length: {len(Data[phase])}")
         print("Creating pytorch dataset...")
         # Latter in this scipt, we will use inputs = x[:-1], targets = x[1:], hence
         # max_seqlen = cf.max_seqlen + 1.
         if cf.mode in ("pos_grad", "grad"):
-            aisdatasets[phase] = datasets.AISDataset_grad(Data[phase],
-                                                          max_seqlen=cf.max_seqlen + 1,
-                                                          device=cf.device)
+            aisdatasets[phase] = datasets.AISDataset_grad(
+                Data[phase], max_seqlen=cf.max_seqlen + 1, device=cf.device
+            )
         else:
-            aisdatasets[phase] = datasets.AISDataset(Data[phase],
-                                                     max_seqlen=cf.max_seqlen + 1,
-                                                     device=cf.device)
+            aisdatasets[phase] = datasets.AISDataset(
+                Data[phase], max_seqlen=cf.max_seqlen + 1, device=cf.device
+            )
         if phase == "test":
             shuffle = False
         else:
             shuffle = True
-        aisdls[phase] = DataLoader(aisdatasets[phase],
-                                   batch_size=cf.batch_size,
-                                   shuffle=shuffle)
+        aisdls[phase] = DataLoader(
+            aisdatasets[phase], batch_size=cf.batch_size, shuffle=shuffle
+        )
     cf.final_tokens = 2 * len(aisdatasets["train"]) * cf.max_seqlen
 
     ## Model
@@ -113,7 +139,15 @@ if __name__ == "__main__":
     ## Trainer
     # ===============================
     trainer = trainers.Trainer(
-        model, aisdatasets["train"], aisdatasets["valid"], cf, savedir=cf.savedir, device=cf.device, aisdls=aisdls, INIT_SEQLEN=init_seqlen)
+        model,
+        aisdatasets["train"],
+        aisdatasets["valid"],
+        cf,
+        savedir=cf.savedir,
+        device=cf.device,
+        aisdls=aisdls,
+        INIT_SEQLEN=init_seqlen,
+    )
 
     ## Training
     # ===============================
@@ -137,25 +171,36 @@ if __name__ == "__main__":
             seqs_init = seqs[:, :init_seqlen, :].to(cf.device)
             masks = masks[:, :max_seqlen].to(cf.device)
             batchsize = seqs.shape[0]
-            error_ens = torch.zeros((batchsize, max_seqlen - cf.init_seqlen, cf.n_samples)).to(cf.device)
+            error_ens = torch.zeros(
+                (batchsize, max_seqlen - cf.init_seqlen, cf.n_samples)
+            ).to(cf.device)
             for i_sample in range(cf.n_samples):
-                preds = trainers.sample(model,
-                                        seqs_init,
-                                        max_seqlen - init_seqlen,
-                                        temperature=1.0,
-                                        sample=True,
-                                        sample_mode=cf.sample_mode,
-                                        r_vicinity=cf.r_vicinity,
-                                        top_k=cf.top_k)
+                preds = trainers.sample(
+                    model,
+                    seqs_init,
+                    max_seqlen - init_seqlen,
+                    temperature=1.0,
+                    sample=True,
+                    sample_mode=cf.sample_mode,
+                    r_vicinity=cf.r_vicinity,
+                    top_k=cf.top_k,
+                )
                 inputs = seqs[:, :max_seqlen, :].to(cf.device)
                 input_coords = (inputs * v_ranges + v_roi_min) * torch.pi / 180
                 pred_coords = (preds * v_ranges + v_roi_min) * torch.pi / 180
                 d = utils.haversine(input_coords, pred_coords) * masks
-                error_ens[:, :, i_sample] = d[:, cf.init_seqlen:]
+                error_ens[:, :, i_sample] = d[:, cf.init_seqlen :]
+
+                # DrawTrajectory(
+                #     sample_idx=i_sample,
+                #     input_coords=input_coords,
+                #     pred_coords=pred_coords,
+                # )
+
             # Accumulation through batches
             l_min_errors.append(error_ens.min(dim=-1))
             l_mean_errors.append(error_ens.mean(dim=-1))
-            l_masks.append(masks[:, cf.init_seqlen:])
+            l_masks.append(masks[:, cf.init_seqlen :])
 
     l_min = [x.values for x in l_min_errors]
     m_masks = torch.cat(l_masks, dim=0)
@@ -173,19 +218,34 @@ if __name__ == "__main__":
     plt.plot(1, pred_errors[timestep], "o")
     plt.plot([1, 1], [0, pred_errors[timestep]], "r")
     plt.plot([0, 1], [pred_errors[timestep], pred_errors[timestep]], "r")
-    plt.text(1.12, pred_errors[timestep] - 0.5, "{:.4f}".format(pred_errors[timestep]), fontsize=10)
+    plt.text(
+        1.12,
+        pred_errors[timestep] - 0.5,
+        "{:.4f}".format(pred_errors[timestep]),
+        fontsize=10,
+    )
 
     timestep = 12
     plt.plot(2, pred_errors[timestep], "o")
     plt.plot([2, 2], [0, pred_errors[timestep]], "r")
     plt.plot([0, 2], [pred_errors[timestep], pred_errors[timestep]], "r")
-    plt.text(2.12, pred_errors[timestep] - 0.5, "{:.4f}".format(pred_errors[timestep]), fontsize=10)
+    plt.text(
+        2.12,
+        pred_errors[timestep] - 0.5,
+        "{:.4f}".format(pred_errors[timestep]),
+        fontsize=10,
+    )
 
     timestep = 18
     plt.plot(3, pred_errors[timestep], "o")
     plt.plot([3, 3], [0, pred_errors[timestep]], "r")
     plt.plot([0, 3], [pred_errors[timestep], pred_errors[timestep]], "r")
-    plt.text(3.12, pred_errors[timestep] - 0.5, "{:.4f}".format(pred_errors[timestep]), fontsize=10)
+    plt.text(
+        3.12,
+        pred_errors[timestep] - 0.5,
+        "{:.4f}".format(pred_errors[timestep]),
+        fontsize=10,
+    )
     plt.xlabel("Time (hours)")
     plt.ylabel("Prediction errors (km)")
     plt.xlim([0, 12])
