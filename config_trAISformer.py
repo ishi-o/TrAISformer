@@ -22,12 +22,12 @@ import torch
 
 
 class Config:
-    retrain = False
+    retrain = True
     tb_log = False
     device = torch.device("cuda:0")
     #     device = torch.device("cpu")
 
-    max_epochs = 50
+    max_epochs = 2
     batch_size = 32
     n_samples = 16
 

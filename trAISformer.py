@@ -191,11 +191,12 @@ if __name__ == "__main__":
                 d = utils.haversine(input_coords, pred_coords) * masks
                 error_ens[:, :, i_sample] = d[:, cf.init_seqlen :]
 
-                # DrawTrajectory(
-                #     sample_idx=i_sample,
-                #     input_coords=input_coords,
-                #     pred_coords=pred_coords,
-                # )
+            if it % 100 == 0:
+                DrawTrajectory(
+                    sample_idx=i_sample,
+                    input_coords=input_coords,
+                    pred_coords=pred_coords,
+                )
 
             # Accumulation through batches
             l_min_errors.append(error_ens.min(dim=-1))
