@@ -34,7 +34,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.nn import functional as F
 import utils
 
-from trAISformer import TB_LOG
+from trAISformer import TB_LOG, tb
 
 logger = logging.getLogger(__name__)
 

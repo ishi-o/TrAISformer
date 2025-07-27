@@ -31,6 +31,7 @@ from tqdm import tqdm
 import math
 import logging
 import pdb
+import time
 
 import torch
 import torch.nn as nn
@@ -42,21 +43,29 @@ from torch.utils.data import Dataset, DataLoader
 import models, trainers, datasets, utils
 from config_trAISformer import Config
 
+# cf: 配置项
 cf = Config()
+
+# 若配置了tb_log, 则将部分信息输出到日志中, 详见trainers.py
 TB_LOG = cf.tb_log
+tb = {}
 if TB_LOG:
     from torch.utils.tensorboard import SummaryWriter
 
     tb = SummaryWriter()
 
-# make deterministic
+# 确定性训练, 固定种子以及设置cudnn的确定性属性
 utils.set_seed(42)
-torch.pi = torch.acos(torch.zeros(1)).item() * 2
+# pi 常数在 pytorch 2.x 版本已有原生定义, 故注释此行
+# torch.pi = torch.acos(torch.zeros(1)).item() * 2
 
 
-def DrawTrajectory(sample_idx, input_coords, pred_coords):
-    real_traj = input_coords[sample_idx].detach().cpu().numpy()
-    pred_traj = pred_coords[sample_idx].detach().cpu().numpy()
+def DrawTrajectory(batch_idx, sample_idx, input_coords, pred_coords):
+    '''
+    画出给定一系列真实轨迹集合和预测轨迹集合, 第batch_idx个batch的第一条轨迹
+    '''
+    real_traj = input_coords[batch_idx].detach().cpu().numpy()
+    pred_traj = pred_coords[batch_idx].detach().cpu().numpy()
     real_lat = real_traj[:, 0] * 180 / np.pi
     real_lon = real_traj[:, 1] * 180 / np.pi
     pred_lat = pred_traj[:, 0] * 180 / np.pi
@@ -72,39 +81,58 @@ def DrawTrajectory(sample_idx, input_coords, pred_coords):
     plt.xlabel('LON(jing du)')
     plt.ylabel('LAT(wei du)')
 
-    plt.savefig(cf.savedir + 'traj_fig' + str(sample_idx) + '.png')
+    plt.savefig(
+        cf.savedir
+        + 'traj_'
+        + str(int(batch_idx / 5))
+        + '_'
+        + str(int(sample_idx / 10))
+        + '.png'
+    )
 
 
 if __name__ == "__main__":
 
+    # 配置项, device: 设备(本项目默认为cuda驱动的GPU), init_seqlen: 初始序列长度
     device = cf.device
     init_seqlen = cf.init_seqlen
 
     ## Logging
     # ===============================
+    # 若不存在该目录则创建
     if not os.path.isdir(cf.savedir):
         os.makedirs(cf.savedir)
         print('======= Create directory to store trained models: ' + cf.savedir)
     else:
         print('======= Directory to store trained models: ' + cf.savedir)
+    # 定义日志信息的格式
     utils.new_log(cf.savedir, "log")
 
     ## Data
     # ===============================
+    # 速度阈值, 只取速度超过moving_threshold的数据
     moving_threshold = 0.05
+    # 数据集所在路径
     l_pkl_filenames = [cf.trainset_name, cf.validset_name, cf.testset_name]
     Data, aisdatasets, aisdls = {}, {}, {}
+    # 加载训练集、验证集、测试集
     for phase, filename in zip(("train", "valid", "test"), l_pkl_filenames):
         datapath = os.path.join(cf.datadir, filename)
         print(f"Loading {datapath}...")
-        with open(datapath, "rb") as f:
+        with open(datapath, "rb") as f:  # 只读打开二进制文件.pkl
             l_pred_errors = pickle.load(f)
+        # 对轨迹数据预处理
         for V in l_pred_errors:
             try:
+                # V["traj"]是轨迹的点集
+                # 第三列为速度, 取出第一个SOG超过阈值的点的编号
                 moving_idx = np.where(V["traj"][:, 2] > moving_threshold)[0][0]
             except:
+                # 所有点均不满足, 则取最后一点的编号
                 moving_idx = len(V["traj"]) - 1  # This track will be removed
+            # 覆盖掉原来的V["traj"], 相当于去除了前方的一系列停留点
             V["traj"] = V["traj"][moving_idx:, :]
+        # 取出预处理后的轨迹数据中, 所有点的特征值均不为nan, 且点数量大于min_seqlen的轨迹
         Data[phase] = [
             x
             for x in l_pred_errors
@@ -115,6 +143,9 @@ if __name__ == "__main__":
         print("Creating pytorch dataset...")
         # Latter in this scipt, we will use inputs = x[:-1], targets = x[1:], hence
         # max_seqlen = cf.max_seqlen + 1.
+        # 将Data数组根据要求封装为不同的Dataset子类对象
+        # 因为 输入是轨迹(假设长度为L)的前L-1个点, 标签是后L-1个点
+        # 轨迹数据最多是cf.max_seqlen个点, 所以需要cf.max_seqlen+1保证序列长度足够
         if cf.mode in ("pos_grad", "grad"):
             aisdatasets[phase] = datasets.AISDataset_grad(
                 Data[phase], max_seqlen=cf.max_seqlen + 1, device=cf.device
@@ -123,21 +154,26 @@ if __name__ == "__main__":
             aisdatasets[phase] = datasets.AISDataset(
                 Data[phase], max_seqlen=cf.max_seqlen + 1, device=cf.device
             )
+        # 测试时不打乱数据保证确定性
         if phase == "test":
             shuffle = False
         else:
             shuffle = True
+        # 一切Dataset子类均封装为DataLoader对象
         aisdls[phase] = DataLoader(
             aisdatasets[phase], batch_size=cf.batch_size, shuffle=shuffle
         )
+    # 2 * 样本数 * 序列长度, 乘2不知道是何意
     cf.final_tokens = 2 * len(aisdatasets["train"]) * cf.max_seqlen
 
     ## Model
     # ===============================
+    # 模型
     model = models.TrAISformer(cf, partition_model=None)
 
     ## Trainer
     # ===============================
+    # 训练器
     trainer = trainers.Trainer(
         model,
         aisdatasets["train"],
@@ -151,12 +187,13 @@ if __name__ == "__main__":
 
     ## Training
     # ===============================
+    # cf.retrain决定此次运行是否训练
     if cf.retrain:
         trainer.train()
 
     ## Evaluation
     # ===============================
-    # Load the best model
+    # 加载训练好的模型
     model.load_state_dict(torch.load(cf.ckpt_path))
 
     v_ranges = torch.tensor([2, 3, 0, 0]).to(cf.device)
@@ -164,8 +201,11 @@ if __name__ == "__main__":
     max_seqlen = init_seqlen + 6 * 4
 
     model.eval()
+    # 最小误差, 均值误差, 掩码
     l_min_errors, l_mean_errors, l_masks = [], [], []
+    # 进度条
     pbar = tqdm(enumerate(aisdls["test"]), total=len(aisdls["test"]))
+    # 不带梯度传播地测试
     with torch.no_grad():
         for it, (seqs, masks, seqlens, mmsis, time_starts) in pbar:
             seqs_init = seqs[:, :init_seqlen, :].to(cf.device)
@@ -191,12 +231,13 @@ if __name__ == "__main__":
                 d = utils.haversine(input_coords, pred_coords) * masks
                 error_ens[:, :, i_sample] = d[:, cf.init_seqlen :]
 
-            if it % 100 == 0:
-                DrawTrajectory(
-                    sample_idx=i_sample,
-                    input_coords=input_coords,
-                    pred_coords=pred_coords,
-                )
+                if it % 5 == 0 and i_sample % 10 == 0:
+                    DrawTrajectory(
+                        batch_idx=it,
+                        sample_idx=i_sample,
+                        input_coords=input_coords,
+                        pred_coords=pred_coords,
+                    )
 
             # Accumulation through batches
             l_min_errors.append(error_ens.min(dim=-1))
@@ -211,6 +252,7 @@ if __name__ == "__main__":
 
     ## Plot
     # ===============================
+    # 画性能图
     plt.figure(figsize=(9, 6), dpi=150)
     v_times = np.arange(len(pred_errors)) / 6
     plt.plot(v_times, pred_errors)

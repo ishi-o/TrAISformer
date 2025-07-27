@@ -22,7 +22,7 @@ import torch
 
 
 class Config:
-    retrain = True
+    retrain = False
     tb_log = False
     device = torch.device("cuda:0")
     #     device = torch.device("cpu")
