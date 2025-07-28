@@ -64,8 +64,8 @@ def DrawTrajectory(batch_idx, sample_idx, input_coords, pred_coords):
     '''
     画出给定一系列真实轨迹集合和预测轨迹集合, 第batch_idx个batch的第一条轨迹
     '''
-    real_traj = input_coords[batch_idx].detach().cpu().numpy()
-    pred_traj = pred_coords[batch_idx].detach().cpu().numpy()
+    real_traj = input_coords[int(batch_idx / 5)].detach().cpu().numpy()
+    pred_traj = pred_coords[int(batch_idx / 5)].detach().cpu().numpy()
     real_lat = real_traj[:, 0] * 180 / np.pi
     real_lon = real_traj[:, 1] * 180 / np.pi
     pred_lat = pred_traj[:, 0] * 180 / np.pi
@@ -89,6 +89,7 @@ def DrawTrajectory(batch_idx, sample_idx, input_coords, pred_coords):
         + str(int(sample_idx / 10))
         + '.png'
     )
+    plt.close()
 
 
 if __name__ == "__main__":

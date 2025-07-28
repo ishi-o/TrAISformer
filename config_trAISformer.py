@@ -27,7 +27,7 @@ class Config:
     device = torch.device("cuda:0")
     #     device = torch.device("cpu")
 
-    max_epochs = 2
+    max_epochs = 10
     batch_size = 32
     n_samples = 16
 
@@ -87,6 +87,8 @@ class Config:
     n_layer = 8
     full_size = lat_size + lon_size + sog_size + cog_size
     n_embd = n_lat_embd + n_lon_embd + n_sog_embd + n_cog_embd
+
+    label_smoothing = 0.1
     # base GPT config, params common to all GPT versions
     embd_pdrop = 0.1
     resid_pdrop = 0.1
@@ -116,6 +118,7 @@ class Config:
         + f"-bs-{batch_size}"
         + f"-lr-{learning_rate}"
         + f"-seqlen-{init_seqlen}-{max_seqlen}"
+        + f"-lbsmooth-{label_smoothing}"
     )
     savedir = "./results/" + filename + "/"
 

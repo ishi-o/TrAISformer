@@ -178,6 +178,11 @@ class TrAISformer(nn.Module):
             else:
                 self.blur_module = None
 
+        if hasattr(config, "label_smoothing"):
+            self.label_smoothing = config.label_smoothing
+        else:
+            self.label_smoothing = 0.0
+
         # 根据论文的fourhot算法, 需要给定lat, lon的最小最大值
         if hasattr(config, "lat_min"):  # the ROI is provided.
             self.lat_min = config.lat_min
@@ -365,6 +370,7 @@ class TrAISformer(nn.Module):
             idxs, idxs_uniform = self.to_indexes(x, mode=self.partition_mode)
 
         # 若x是带标签的, 则视前L-1点为输入, 后L-1点为标签
+        # 实际上为了方便嵌入, 这里的idxs最低维不是onehot向量, 而是离散的整数值
         if with_targets:
             inputs = idxs[:, :-1, :].contiguous()
             targets = idxs[:, 1:, :].contiguous()
@@ -411,25 +417,33 @@ class TrAISformer(nn.Module):
         loss_tuple = None
         if targets is not None:
             # 经过ce获得四者损失再相加
+            # print(sog_logits.view(-1, self.sog_size).shape)
+            # print(targets[:, :, 2].view(-1).shape)
+
+            # cross_entropy内置label_smoothing
             sog_loss = F.cross_entropy(
                 sog_logits.view(-1, self.sog_size),
                 targets[:, :, 2].view(-1),
                 reduction="none",
+                label_smoothing=self.label_smoothing,
             ).view(batchsize, seqlen)
             cog_loss = F.cross_entropy(
                 cog_logits.view(-1, self.cog_size),
                 targets[:, :, 3].view(-1),
                 reduction="none",
+                label_smoothing=self.label_smoothing,
             ).view(batchsize, seqlen)
             lat_loss = F.cross_entropy(
                 lat_logits.view(-1, self.lat_size),
                 targets[:, :, 0].view(-1),
                 reduction="none",
+                label_smoothing=self.label_smoothing,
             ).view(batchsize, seqlen)
             lon_loss = F.cross_entropy(
                 lon_logits.view(-1, self.lon_size),
                 targets[:, :, 1].view(-1),
                 reduction="none",
+                label_smoothing=self.label_smoothing,
             ).view(batchsize, seqlen)
 
             # blur版本数据先softmax再一维卷积再nll_loss(和ce区别是softmax和nll中间加了个卷积)
